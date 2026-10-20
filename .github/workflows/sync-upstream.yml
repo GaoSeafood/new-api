@@ -70,13 +70,19 @@ jobs:
           cat >> "$RUNNER_TEMP/pr-body.md" <<'EOF'
           Merge conflicts stop the workflow. Automatic merge waits for every check and pauses if workflows, deployment files, environment files, or schema migrations change.
           EOF
-          pr_number="$(gh pr list --repo "$GH_REPO" --state open --base "$FORK_BRANCH" --head "$GH_OWNER:automation/upstream-sync" --json number --jq '.[0].number // empty')"
+
+          find_sync_pr() {
+            gh api "repos/$GH_REPO/pulls?state=open&base=$FORK_BRANCH&per_page=100" \
+              | jq -r --arg repo "$GH_REPO" '[.[] | select(.head.ref == "automation/upstream-sync" and .head.repo.full_name == $repo)] | .[0].number // empty'
+          }
+
+          pr_number="$(find_sync_pr)"
           if [[ -n "$pr_number" ]]; then
             gh pr edit "$pr_number" --repo "$GH_REPO" --title "chore: sync upstream" --body-file "$RUNNER_TEMP/pr-body.md"
           else
             gh pr create --repo "$GH_REPO" --base "$FORK_BRANCH" --head "$GH_OWNER:automation/upstream-sync" --title "chore: sync upstream" --body-file "$RUNNER_TEMP/pr-body.md"
           fi
-          pr_number="$(gh pr list --repo "$GH_REPO" --state open --base "$FORK_BRANCH" --head "$GH_OWNER:automation/upstream-sync" --json number --jq '.[0].number // empty')"
+          pr_number="$(find_sync_pr)"
           [[ -n "$pr_number" ]] || { echo "Could not find the upstream sync PR after creating it."; exit 1; }
           echo "pr_number=$pr_number" >> "$GITHUB_OUTPUT"
 
