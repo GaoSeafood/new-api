@@ -14,10 +14,11 @@ concurrency:
 jobs:
   propose:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 60
     permissions:
       contents: write
       pull-requests: write
+      actions: write
     env:
       UPSTREAM_REPOSITORY: "QuantumNous/new-api"
       UPSTREAM_BRANCH: "main"
@@ -45,9 +46,18 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch --force-create automation/upstream-sync "origin/$FORK_BRANCH"
           git merge --no-edit --no-ff "upstream/$UPSTREAM_BRANCH"
+
+          changed_files="$(git diff --name-only "origin/$FORK_BRANCH" automation/upstream-sync)"
+          manual_review=false
+          if grep -Eiq '(^\.github/|(^|/)(Dockerfile[^/]*|docker-compose[^/]*|compose\.(yaml|yml))$|(^|/)(deploy|ops)/|(^|/)(model|models|migrations?|schema|database)(/|$)|(^|/)(models?\.py|[^/]*Model\.php)$|(^|/)\.env($|\.)|(^|/)AGENTS\.md$)' <<<"$changed_files"; then
+            manual_review=true
+          fi
+          echo "manual_review=$manual_review" >> "$GITHUB_OUTPUT"
+
           git push --force origin automation/upstream-sync
 
       - name: Open or refresh the review PR
+        id: pr
         if: steps.sync.outputs.count != '0'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -56,8 +66,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cat > "$RUNNER_TEMP/pr-body.md" <<EOF
-          This PR syncs `$UPSTREAM_REPOSITORY` into this fork.
+          printf 'This PR syncs upstream %s into this fork.\n\n' "$UPSTREAM_REPOSITORY" > "$RUNNER_TEMP/pr-body.md"
+          cat >> "$RUNNER_TEMP/pr-body.md" <<'EOF'
           Merge conflicts stop the workflow. Automatic merge waits for every check and pauses if workflows, deployment files, environment files, or schema migrations change.
           EOF
           pr_number="$(gh pr list --repo "$GH_REPO" --state open --base "$FORK_BRANCH" --head "$GH_OWNER:automation/upstream-sync" --json number --jq '.[0].number // empty')"
@@ -66,3 +76,60 @@ jobs:
           else
             gh pr create --repo "$GH_REPO" --base "$FORK_BRANCH" --head "$GH_OWNER:automation/upstream-sync" --title "chore: sync upstream" --body-file "$RUNNER_TEMP/pr-body.md"
           fi
+          pr_number="$(gh pr list --repo "$GH_REPO" --state open --base "$FORK_BRANCH" --head "$GH_OWNER:automation/upstream-sync" --json number --jq '.[0].number // empty')"
+          [[ -n "$pr_number" ]] || { echo "Could not find the upstream sync PR after creating it."; exit 1; }
+          echo "pr_number=$pr_number" >> "$GITHUB_OUTPUT"
+
+      - name: Mark protected upstream changes for manual review
+        if: steps.sync.outputs.manual_review == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ steps.pr.outputs.pr_number }}
+        run: gh pr comment "$PR_NUMBER" --repo "$GH_REPO" --body "Automatic upstream sync paused for manual review because this PR changes a workflow, deployment, environment, or schema file."
+
+      - name: Run checks and start trusted auto-merge
+        if: steps.sync.outputs.count != '0' && steps.sync.outputs.manual_review != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ steps.pr.outputs.pr_number }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          pr_json="$(gh api "repos/$GH_REPO/pulls/$PR_NUMBER")"
+          head_repo="$(jq -r '.head.repo.full_name // ""' <<<"$pr_json")"
+          head_ref="$(jq -r '.head.ref' <<<"$pr_json")"
+          base_ref="$(jq -r '.base.ref' <<<"$pr_json")"
+          head_sha="$(jq -r '.head.sha' <<<"$pr_json")"
+          repo_lower="$(tr '[:upper:]' '[:lower:]' <<<"$GH_REPO")"
+          [[ "$(tr '[:upper:]' '[:lower:]' <<<"$head_repo")" == "$repo_lower" ]]
+          [[ "$head_ref" == "automation/upstream-sync" && "$base_ref" == "$FORK_BRANCH" ]]
+
+          before_run_number="$(gh api "repos/$GH_REPO/actions/workflows/ci.yml/runs?branch=$head_ref&event=workflow_dispatch&per_page=100" --jq '[.workflow_runs[].run_number] | max // 0')"
+          gh workflow run ci.yml --repo "$GH_REPO" --ref "$head_ref"
+
+          checks_passed=false
+          for attempt in $(seq 1 300); do
+            runs="$(gh api "repos/$GH_REPO/actions/workflows/ci.yml/runs?branch=$head_ref&event=workflow_dispatch&per_page=100")"
+            run_json="$(jq -c --arg sha "$head_sha" --argjson before "$before_run_number" '[.workflow_runs[] | select(.head_sha == $sha and .run_number > $before)] | sort_by(.run_number) | last // empty' <<<"$runs")"
+            if [[ -n "$run_json" ]]; then
+              run_id="$(jq -r '.id' <<<"$run_json")"
+              run_state="$(gh api "repos/$GH_REPO/actions/runs/$run_id" --jq '[.status,.conclusion] | @tsv')"
+              status="${run_state%%$'\t'*}"
+              conclusion="${run_state#*$'\t'}"
+              if [[ "$status" == "completed" ]]; then
+                [[ "$conclusion" == "success" ]] || { echo "CI did not pass for upstream sync commit $head_sha ($conclusion)."; exit 1; }
+                checks_passed=true
+                break
+              fi
+            fi
+            sleep 10
+          done
+          [[ "$checks_passed" == "true" ]] || { echo "Timed out waiting for CI on upstream sync commit $head_sha."; exit 1; }
+
+          current="$(gh api "repos/$GH_REPO/pulls/$PR_NUMBER" --jq '[.state,.head.sha,.head.ref,.base.ref,.head.repo.full_name] | @tsv')"
+          expected="$(printf 'open\t%s\t%s\t%s\t%s' "$head_sha" "automation/upstream-sync" "$FORK_BRANCH" "$GH_REPO")"
+          [[ "$current" == "$expected" ]] || { echo "The sync PR changed while CI was running; leaving it open."; exit 1; }
+
+          gh workflow run auto-merge.yml --repo "$GH_REPO" --ref "$FORK_BRANCH" --field pr_number="$PR_NUMBER"
