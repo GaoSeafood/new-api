@@ -10,3 +10,13 @@ docs
 /web/node_modules
 /web/dist
 !THIRD-PARTY-LICENSES.md
+
+# Keep local secrets out of the Docker build context
+.env
+.env.*
+*.pem
+*.key
+id_rsa
+id_ed25519
+credentials*.json
+secrets/
