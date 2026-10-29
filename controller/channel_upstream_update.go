@@ -447,6 +447,9 @@ func fetchChannelUpstreamModelIDs(channel *model.Channel) ([]string, error) {
 	if err != nil {
 		return nil, sanitizeFetchModelsError(err, key)
 	}
+	if channel.Type == constant.ChannelTypeSub2API {
+		return fetchSub2APIModels(channel, baseURL, headers, key)
+	}
 
 	body, err := getFetchModelsResponseBody(http.MethodGet, url, channel, headers)
 	if err != nil {
@@ -464,6 +467,38 @@ func fetchChannelUpstreamModelIDs(channel *model.Channel) ([]string, error) {
 		return item.ID
 	})
 	return normalizeModelNames(ids), nil
+}
+
+func fetchSub2APIModels(channel *model.Channel, baseURL string, headers http.Header, key string) ([]string, error) {
+	baseURL = strings.TrimRight(baseURL, "/")
+	rootURL := baseURL
+	if strings.HasSuffix(rootURL, "/antigravity") {
+		rootURL = strings.TrimSuffix(rootURL, "/antigravity")
+	}
+	urls := []string{rootURL + "/v1/models", rootURL + "/antigravity/v1/models"}
+	var models []string
+	var lastErr error
+	for _, requestURL := range urls {
+		body, err := getFetchModelsResponseBody(http.MethodGet, requestURL, channel, headers)
+		if err != nil {
+			lastErr = sanitizeAdvancedCustomRequestError(err, key, requestURL)
+			continue
+		}
+		ids, err := parseOpenAIModelIDs(body)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		models = append(models, ids...)
+	}
+	models = normalizeModelNames(models)
+	if len(models) == 0 && lastErr != nil {
+		return nil, lastErr
+	}
+	if len(models) == 0 {
+		return nil, fmt.Errorf("Sub2API returned no models")
+	}
+	return models, nil
 }
 
 func fetchAdvancedCustomUpstreamModelIDs(channel *model.Channel, baseURL string) ([]string, error) {

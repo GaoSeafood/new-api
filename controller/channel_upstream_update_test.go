@@ -418,6 +418,62 @@ func TestFetchNewAPIModelsUsesOpenAIContract(t *testing.T) {
 	require.Equal(t, []string{"gpt-5", "gpt-5-mini"}, models)
 }
 
+func TestFetchSub2APIModelsCombinesGatewayAndAntigravityModels(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "Bearer sub2api-key", r.Header.Get("Authorization"))
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/models":
+			_, _ = w.Write([]byte(`{"data":[{"id":"gemini-3-flash"},{"id":"claude-sonnet-4-5"}]}`))
+		case "/antigravity/v1/models":
+			_, _ = w.Write([]byte(`{"data":[{"id":"claude-opus-5-5-high"},{"id":"gemini-4-argon-high"},{"id":"gemini-3-flash"}]}`))
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	channel := &model.Channel{
+		Type:    constant.ChannelTypeSub2API,
+		Key:     "sub2api-key",
+		BaseURL: &server.URL,
+	}
+
+	models, err := fetchChannelUpstreamModelIDs(channel)
+
+	require.NoError(t, err)
+	require.Equal(t, []string{"gemini-3-flash", "claude-sonnet-4-5", "claude-opus-5-5-high", "gemini-4-argon-high"}, models)
+}
+
+func TestFetchSub2APIModelsWithAntigravityBaseURLDoesNotDuplicatePrefix(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/models":
+			_, _ = w.Write([]byte(`{"data":[{"id":"gemini-3-flash"}]}`))
+		case "/antigravity/v1/models":
+			_, _ = w.Write([]byte(`{"data":[{"id":"claude-opus-5-5-high"}]}`))
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	baseURL := server.URL + "/antigravity"
+	channel := &model.Channel{
+		Type:    constant.ChannelTypeSub2API,
+		Key:     "sub2api-key",
+		BaseURL: &baseURL,
+	}
+
+	models, err := fetchChannelUpstreamModelIDs(channel)
+
+	require.NoError(t, err)
+	require.Equal(t, []string{"gemini-3-flash", "claude-opus-5-5-high"}, models)
+}
+
 func TestNormalizeModelNames(t *testing.T) {
 	result := normalizeModelNames([]string{
 		" gpt-4o ",

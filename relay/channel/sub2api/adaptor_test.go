@@ -8,6 +8,7 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -26,6 +27,70 @@ func TestGetRequestURLAlphaSearch(t *testing.T) {
 	url, err := adaptor.GetRequestURL(info)
 	require.NoError(t, err)
 	assert.Equal(t, "https://sub2api.example/v1/alpha/search", url)
+}
+
+func TestGetRequestURLRoutesAntigravityModels(t *testing.T) {
+	tests := []struct {
+		name        string
+		baseURL     string
+		model       string
+		relayFormat types.RelayFormat
+		requestPath string
+		want        string
+	}{
+		{
+			name:        "Claude Opus 5.5",
+			baseURL:     "https://sub2api.example",
+			model:       "claude-opus-5-5-high",
+			relayFormat: types.RelayFormatClaude,
+			requestPath: "/v1/messages",
+			want:        "https://sub2api.example/antigravity/v1/messages",
+		},
+		{
+			name:        "Claude Sonnet 5.5 with configured prefix",
+			baseURL:     "https://sub2api.example/antigravity/",
+			model:       "claude-sonnet-5-5-medium",
+			relayFormat: types.RelayFormatClaude,
+			requestPath: "/v1/messages",
+			want:        "https://sub2api.example/antigravity/v1/messages",
+		},
+		{
+			name:        "Gemini 4 Argon",
+			baseURL:     "https://sub2api.example",
+			model:       "gemini-4-argon-high",
+			relayFormat: types.RelayFormatGemini,
+			requestPath: "/v1beta/models/gemini-4-argon-high:generateContent",
+			want:        "https://sub2api.example/antigravity/v1beta/models/gemini-4-argon-high:generateContent",
+		},
+		{
+			name:        "ordinary Claude stays on the gateway root",
+			baseURL:     "https://sub2api.example",
+			model:       "claude-sonnet-4-5",
+			relayFormat: types.RelayFormatClaude,
+			requestPath: "/v1/messages",
+			want:        "https://sub2api.example/v1/messages",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			info := &relaycommon.RelayInfo{
+				RelayFormat:    tt.relayFormat,
+				RequestURLPath: tt.requestPath,
+				ChannelMeta: &relaycommon.ChannelMeta{
+					ChannelType:       constant.ChannelTypeSub2API,
+					ChannelBaseUrl:    tt.baseURL,
+					UpstreamModelName: tt.model,
+				},
+			}
+
+			url, err := (&Adaptor{}).GetRequestURL(info)
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, url)
+			assert.Equal(t, tt.baseURL, info.ChannelBaseUrl)
+		})
+	}
 }
 
 func TestAdaptorInheritsNewAPIResponsesCompactSupport(t *testing.T) {
