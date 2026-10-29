@@ -3,6 +3,7 @@ package helper
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/QuantumNous/new-api/constant"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -44,10 +45,14 @@ func ApplyReasoningModelSuffix(c *gin.Context, info *relaycommon.RelayInfo, outb
 	}
 	upstreamParsed := originParsed
 	if upstream != origin {
-		if info.ChannelMeta != nil && info.ChannelMeta.ApiType == constant.APITypeSub2API && info.IsModelMapped {
+		if info.ChannelMeta != nil && info.IsModelMapped &&
+			(info.ChannelMeta.ApiType == constant.APITypeSub2API ||
+				info.ChannelMeta.ApiType == constant.APITypeAdvancedCustom &&
+					strings.HasSuffix(strings.TrimRight(info.ChannelMeta.ChannelBaseUrl, "/"), "/antigravity")) {
 			// Sub2API exposes model variants such as `claude-opus-5-5-high` as
-			// literal model IDs. Treat a mapped target as authoritative so the
-			// host's Claude/Gemini reasoning suffix parser does not strip it.
+			// literal model IDs. The same gateway can be configured through the
+			// Advanced Custom adaptor, so use its Antigravity base path as well.
+			// Treat mapped targets as authoritative so suffix parsing does not strip them.
 			upstreamParsed = parsedModelModifiers{base: upstream}
 		} else {
 			upstreamParsed, err = parseRequestModelName(upstream, opts)

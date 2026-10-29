@@ -189,7 +189,8 @@ func TestApplyReasoningModelSuffixPreservesMappedSub2APIModelIDs(t *testing.T) {
 				OriginModelName: strings.TrimSuffix(model, "-high"),
 				ChannelMeta: &relaycommon.ChannelMeta{
 					ChannelType:       constant.ChannelTypeAdvancedCustom,
-					ApiType:           constant.APITypeSub2API,
+					ApiType:           constant.APITypeAdvancedCustom,
+					ChannelBaseUrl:    "http://sub2api-app:8080/antigravity",
 					UpstreamModelName: model,
 					IsModelMapped:     true,
 				},
