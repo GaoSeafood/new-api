@@ -182,6 +182,27 @@ func TestApplyReasoningModelSuffixClaudeEffortTailKeptWhenAdapterDisabled(t *tes
 	assert.Nil(t, info.ReasoningConversion)
 }
 
+func TestApplyReasoningModelSuffixPreservesMappedSub2APIModelIDs(t *testing.T) {
+	for _, model := range []string{"claude-opus-5-5-high", "claude-sonnet-5-5-high", "gemini-4-argon-high"} {
+		t.Run(model, func(t *testing.T) {
+			info := &relaycommon.RelayInfo{
+				OriginModelName: strings.TrimSuffix(model, "-high"),
+				ChannelMeta: &relaycommon.ChannelMeta{
+					ChannelType:       constant.ChannelTypeAdvancedCustom,
+					ApiType:           constant.APITypeSub2API,
+					UpstreamModelName: model,
+					IsModelMapped:     true,
+				},
+			}
+
+			mustApplyReasoningModelSuffix(t, info)
+
+			assert.Equal(t, model, info.UpstreamModelName)
+			assert.Nil(t, info.ReasoningConversion)
+		})
+	}
+}
+
 func TestApplyReasoningModelSuffixPreservesEffortTailModelID(t *testing.T) {
 	info := &relaycommon.RelayInfo{
 		OriginModelName: "qwen-max",

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/QuantumNous/new-api/constant"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert/convmeta"
@@ -43,9 +44,16 @@ func ApplyReasoningModelSuffix(c *gin.Context, info *relaycommon.RelayInfo, outb
 	}
 	upstreamParsed := originParsed
 	if upstream != origin {
-		upstreamParsed, err = parseRequestModelName(upstream, opts)
-		if err != nil {
-			return reasoning.AsClientError(err)
+		if info.ChannelMeta != nil && info.ChannelMeta.ApiType == constant.APITypeSub2API && info.IsModelMapped {
+			// Sub2API exposes model variants such as `claude-opus-5-5-high` as
+			// literal model IDs. Treat a mapped target as authoritative so the
+			// host's Claude/Gemini reasoning suffix parser does not strip it.
+			upstreamParsed = parsedModelModifiers{base: upstream}
+		} else {
+			upstreamParsed, err = parseRequestModelName(upstream, opts)
+			if err != nil {
+				return reasoning.AsClientError(err)
+			}
 		}
 	}
 	diagnostics := append([]types.ConversionDiagnostic(nil), originParsed.diagnostics...)
